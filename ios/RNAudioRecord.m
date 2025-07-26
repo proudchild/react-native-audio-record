@@ -19,13 +19,6 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) options) {
 
     _recordState.bufferByteSize = 2048;
     _recordState.mSelf = self;
-
-    NSString *uuid = [[NSUUID UUID] UUIDString];
-    NSString *fileName = [NSString stringWithFormat:@"audio-%@.wav", uuid];
-    NSString *docDir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-    _filePath = [docDir stringByAppendingPathComponent:fileName];
-
-    RCTLogInfo(@"[INIT] Arquivo será salvo em %@", _filePath);
 }
 
 RCT_EXPORT_METHOD(start) {
@@ -46,7 +39,7 @@ RCT_EXPORT_METHOD(start) {
     if (_recordState.mAudioFile != NULL) {
         AudioFileClose(_recordState.mAudioFile);
         _recordState.mAudioFile = NULL;
-        RCTLogInfo(@"[START] Arquivo antigo fechado");
+        RCTLogInfo(@"[START] Arquivo antigo fechado ");
     }
 
     // Configura sessão de áudio
@@ -56,6 +49,8 @@ RCT_EXPORT_METHOD(start) {
     [session setActive:YES error:&sessionError];
     if (sessionError != nil) {
         NSLog(@"[START] Erro ao configurar sessão de áudio: %@", sessionError);
+    }else{
+        NSLog(@"[START] Sessão de audio configurada com sucesso: %@", session);
     }
 
     _recordState.mIsRunning = true;
@@ -70,16 +65,19 @@ RCT_EXPORT_METHOD(start) {
     CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, (CFStringRef)_filePath, NULL);
     OSStatus audioFileStatus = AudioFileCreateWithURL(url, kAudioFileWAVEType, &_recordState.mDataFormat, kAudioFileFlags_EraseFile, &_recordState.mAudioFile);
     CFRelease(url);
-
     if (audioFileStatus != noErr) {
         NSLog(@"[START] Erro ao criar arquivo de áudio: %d", (int)audioFileStatus);
         return;
+    }else{
+        NSLog(@"[START] Arquivo de auido criado com sucesso: %d", (int)audioFileStatus);
     }
 
     OSStatus queueStatus = AudioQueueNewInput(&_recordState.mDataFormat, HandleInputBuffer, &_recordState, NULL, NULL, 0, &_recordState.mQueue);
     if (queueStatus != noErr) {
         NSLog(@"[START] Erro ao criar fila de gravação: %d", (int)queueStatus);
         return;
+    }else{
+        NSLog(@"[START] Fila de áuido criada com sucesso: %d", (int)queueStatus);
     }
 
     for (int i = 0; i < kNumberBuffers; i++) {
@@ -87,9 +85,9 @@ RCT_EXPORT_METHOD(start) {
         AudioQueueEnqueueBuffer(_recordState.mQueue, _recordState.mBuffers[i], 0, NULL);
     }
 
-    AudioQueueStart(_recordState.mQueue, NULL);
+    OSStatus audioQueueStartStatus = AudioQueueStart(_recordState.mQueue, NULL);
 
-    RCTLogInfo(@"[START] Gravação iniciada com sucesso.");
+    RCTLogInfo(@"[START] Gravação iniciada com sucesso. %d", audioQueueStartStatus);
 }
 
 RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
@@ -129,9 +127,11 @@ void HandleInputBuffer(void *inUserData,
                        const AudioTimeStamp *inStartTime,
                        UInt32 inNumPackets,
                        const AudioStreamPacketDescription *inPacketDesc) {
+    RCTLogInfo(@"[HandleInputBuffer] INIT:");
     AQRecordState* pRecordState = (AQRecordState *)inUserData;
 
     if (!pRecordState->mIsRunning) {
+        RCTLogInfo(@"[HandleInputBuffer] RETURN NOT RUNNING:");
         return;
     }
 
