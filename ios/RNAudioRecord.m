@@ -5,7 +5,8 @@
 RCT_EXPORT_MODULE();
 
 RCT_EXPORT_METHOD(init:(NSDictionary *) options) {
-    RCTLogInfo(@"init");
+    RCTLogInfo(@"[INIT] Inicializando configurações de gravação");
+
     _recordState.mDataFormat.mSampleRate        = options[@"sampleRate"] == nil ? 44100 : [options[@"sampleRate"] doubleValue];
     _recordState.mDataFormat.mBitsPerChannel    = options[@"bitsPerSample"] == nil ? 16 : [options[@"bitsPerSample"] unsignedIntValue];
     _recordState.mDataFormat.mChannelsPerFrame  = options[@"channels"] == nil ? 1 : [options[@"channels"] unsignedIntValue];
@@ -16,76 +17,79 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) options) {
     _recordState.mDataFormat.mFormatID          = kAudioFormatLinearPCM;
     _recordState.mDataFormat.mFormatFlags       = _recordState.mDataFormat.mBitsPerChannel == 8 ? kLinearPCMFormatFlagIsPacked : (kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked);
 
-    
     _recordState.bufferByteSize = 2048;
     _recordState.mSelf = self;
-    
-    NSString *fileName = options[@"wavFile"] == nil ? @"audio.wav" : options[@"wavFile"];
+
+    NSString *uuid = [[NSUUID UUID] UUIDString];
+    NSString *fileName = [NSString stringWithFormat:@"audio-%@.wav", uuid];
     NSString *docDir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-    _filePath = [NSString stringWithFormat:@"%@/%@", docDir, fileName];
+    _filePath = [docDir stringByAppendingPathComponent:fileName];
+
+    RCTLogInfo(@"[INIT] Arquivo será salvo em %@", _filePath);
 }
 
 RCT_EXPORT_METHOD(start) {
-    RCTLogInfo(@"start");
+    RCTLogInfo(@"[START] Iniciando gravação");
 
     if (_recordState.mIsRunning) {
-        RCTLogInfo(@"Gravação já em andamento, abortando novo start.");
+        RCTLogInfo(@"[START] Gravação já em andamento, ignorando novo start.");
         return;
     }
 
-    // Finaliza qualquer gravação antiga mal encerrada
     if (_recordState.mQueue != NULL) {
         AudioQueueDispose(_recordState.mQueue, true);
         _recordState.mQueue = NULL;
+        RCTLogInfo(@"[START] Fila antiga descartada");
     }
 
     if (_recordState.mAudioFile != NULL) {
         AudioFileClose(_recordState.mAudioFile);
         _recordState.mAudioFile = NULL;
+        RCTLogInfo(@"[START] Arquivo antigo fechado");
     }
 
-    // Configura sessão de áudio
     NSError *sessionError = nil;
     AVAudioSession *session = [AVAudioSession sharedInstance];
     [session setCategory:AVAudioSessionCategoryPlayAndRecord error:&sessionError];
     [session setActive:YES error:&sessionError];
     if (sessionError != nil) {
-        NSLog(@"Erro ao configurar sessão de áudio: %@", sessionError);
+        NSLog(@"[START] Erro ao configurar sessão de áudio: %@", sessionError);
     }
 
     _recordState.mIsRunning = true;
     _recordState.mCurrentPacket = 0;
-
-    // Gera nome de arquivo único
-    NSString *uuid = [[NSUUID UUID] UUIDString];
-    NSString *fileName = [NSString stringWithFormat:@"audio-%@.wav", uuid];
-    NSString *docDir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-    _filePath = [docDir stringByAppendingPathComponent:fileName];
 
     CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, (CFStringRef)_filePath, NULL);
     OSStatus audioFileStatus = AudioFileCreateWithURL(url, kAudioFileWAVEType, &_recordState.mDataFormat, kAudioFileFlags_EraseFile, &_recordState.mAudioFile);
     CFRelease(url);
 
     if (audioFileStatus != noErr) {
-        NSLog(@"Erro ao criar arquivo de áudio: %d", (int)audioFileStatus);
+        NSLog(@"[START] Erro ao criar arquivo de áudio: %d", (int)audioFileStatus);
         return;
     }
 
-    AudioQueueNewInput(&_recordState.mDataFormat, HandleInputBuffer, &_recordState, NULL, NULL, 0, &_recordState.mQueue);
+    OSStatus queueStatus = AudioQueueNewInput(&_recordState.mDataFormat, HandleInputBuffer, &_recordState, NULL, NULL, 0, &_recordState.mQueue);
+    if (queueStatus != noErr) {
+        NSLog(@"[START] Erro ao criar fila de gravação: %d", (int)queueStatus);
+        return;
+    }
+
     for (int i = 0; i < kNumberBuffers; i++) {
         AudioQueueAllocateBuffer(_recordState.mQueue, _recordState.bufferByteSize, &_recordState.mBuffers[i]);
         AudioQueueEnqueueBuffer(_recordState.mQueue, _recordState.mBuffers[i], 0, NULL);
     }
 
     AudioQueueStart(_recordState.mQueue, NULL);
+
+    RCTLogInfo(@"[START] Gravação iniciada com sucesso.");
 }
 
 RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
-                  rejecter:(__unused RCTPromiseRejectBlock)reject) {
-    RCTLogInfo(@"stop");
+                  rejecter:(RCTPromiseRejectBlock)reject) {
+    RCTLogInfo(@"[STOP] Finalizando gravação");
 
     if (!_recordState.mIsRunning) {
-        RCTLogInfo(@"Nenhuma gravação ativa para parar.");
+        RCTLogInfo(@"[STOP] Nenhuma gravação ativa.");
         resolve(_filePath ?: @"");
         return;
     }
@@ -103,11 +107,14 @@ RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
         _recordState.mAudioFile = NULL;
     }
 
+    RCTLogInfo(@"[STOP] Gravação encerrada: %@", _filePath);
+    unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:_filePath error:nil] fileSize];
+    RCTLogInfo(@"[STOP] Tamanho do arquivo: %llu bytes", fileSize);
+
     resolve(_filePath);
 
-    unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:_filePath error:nil] fileSize];
-    RCTLogInfo(@"Arquivo gravado em: %@", _filePath);
-    RCTLogInfo(@"Tamanho do arquivo: %llu bytes", fileSize);
+    memset(&_recordState, 0, sizeof(_recordState));
+    _recordState.mSelf = self;
 }
 
 void HandleInputBuffer(void *inUserData,
@@ -117,11 +124,11 @@ void HandleInputBuffer(void *inUserData,
                        UInt32 inNumPackets,
                        const AudioStreamPacketDescription *inPacketDesc) {
     AQRecordState* pRecordState = (AQRecordState *)inUserData;
-    
+
     if (!pRecordState->mIsRunning) {
         return;
     }
-    
+
     if (AudioFileWritePackets(pRecordState->mAudioFile,
                               false,
                               inBuffer->mAudioDataByteSize,
@@ -132,13 +139,13 @@ void HandleInputBuffer(void *inUserData,
                               ) == noErr) {
         pRecordState->mCurrentPacket += inNumPackets;
     }
-    
+
     short *samples = (short *) inBuffer->mAudioData;
     long nsamples = inBuffer->mAudioDataByteSize;
     NSData *data = [NSData dataWithBytes:samples length:nsamples];
     NSString *str = [data base64EncodedStringWithOptions:0];
     [pRecordState->mSelf sendEventWithName:@"data" body:str];
-    
+
     AudioQueueEnqueueBuffer(pRecordState->mQueue, inBuffer, 0, NULL);
 }
 
@@ -147,7 +154,7 @@ void HandleInputBuffer(void *inUserData,
 }
 
 - (void)dealloc {
-    RCTLogInfo(@"dealloc");
+    RCTLogInfo(@"[DEALLOC] Limpando fila de áudio");
     if (_recordState.mQueue != NULL) {
         AudioQueueDispose(_recordState.mQueue, true);
         _recordState.mQueue = NULL;
