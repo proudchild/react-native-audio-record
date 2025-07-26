@@ -28,38 +28,86 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) options) {
 RCT_EXPORT_METHOD(start) {
     RCTLogInfo(@"start");
 
-    // most audio players set session category to "Playback", record won't work in this mode
-    // therefore set session category to "Record" before recording
-    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryRecord error:nil];
+    if (_recordState.mIsRunning) {
+        RCTLogInfo(@"Gravação já em andamento, abortando novo start.");
+        return;
+    }
+
+    // Finaliza qualquer gravação antiga mal encerrada
+    if (_recordState.mQueue != NULL) {
+        AudioQueueDispose(_recordState.mQueue, true);
+        _recordState.mQueue = NULL;
+    }
+
+    if (_recordState.mAudioFile != NULL) {
+        AudioFileClose(_recordState.mAudioFile);
+        _recordState.mAudioFile = NULL;
+    }
+
+    // Configura sessão de áudio
+    NSError *sessionError = nil;
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    [session setCategory:AVAudioSessionCategoryPlayAndRecord error:&sessionError];
+    [session setActive:YES error:&sessionError];
+    if (sessionError != nil) {
+        NSLog(@"Erro ao configurar sessão de áudio: %@", sessionError);
+    }
 
     _recordState.mIsRunning = true;
     _recordState.mCurrentPacket = 0;
-    
+
+    // Gera nome de arquivo único
+    NSString *uuid = [[NSUUID UUID] UUIDString];
+    NSString *fileName = [NSString stringWithFormat:@"audio-%@.wav", uuid];
+    NSString *docDir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    _filePath = [docDir stringByAppendingPathComponent:fileName];
+
     CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, (CFStringRef)_filePath, NULL);
-    AudioFileCreateWithURL(url, kAudioFileWAVEType, &_recordState.mDataFormat, kAudioFileFlags_EraseFile, &_recordState.mAudioFile);
+    OSStatus audioFileStatus = AudioFileCreateWithURL(url, kAudioFileWAVEType, &_recordState.mDataFormat, kAudioFileFlags_EraseFile, &_recordState.mAudioFile);
     CFRelease(url);
-    
+
+    if (audioFileStatus != noErr) {
+        NSLog(@"Erro ao criar arquivo de áudio: %d", (int)audioFileStatus);
+        return;
+    }
+
     AudioQueueNewInput(&_recordState.mDataFormat, HandleInputBuffer, &_recordState, NULL, NULL, 0, &_recordState.mQueue);
     for (int i = 0; i < kNumberBuffers; i++) {
         AudioQueueAllocateBuffer(_recordState.mQueue, _recordState.bufferByteSize, &_recordState.mBuffers[i]);
         AudioQueueEnqueueBuffer(_recordState.mQueue, _recordState.mBuffers[i], 0, NULL);
     }
+
     AudioQueueStart(_recordState.mQueue, NULL);
 }
 
 RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
                   rejecter:(__unused RCTPromiseRejectBlock)reject) {
     RCTLogInfo(@"stop");
-    if (_recordState.mIsRunning) {
-        _recordState.mIsRunning = false;
+
+    if (!_recordState.mIsRunning) {
+        RCTLogInfo(@"Nenhuma gravação ativa para parar.");
+        resolve(_filePath ?: @"");
+        return;
+    }
+
+    _recordState.mIsRunning = false;
+
+    if (_recordState.mQueue != NULL) {
         AudioQueueStop(_recordState.mQueue, true);
         AudioQueueDispose(_recordState.mQueue, true);
-        AudioFileClose(_recordState.mAudioFile);
+        _recordState.mQueue = NULL;
     }
+
+    if (_recordState.mAudioFile != NULL) {
+        AudioFileClose(_recordState.mAudioFile);
+        _recordState.mAudioFile = NULL;
+    }
+
     resolve(_filePath);
+
     unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:_filePath error:nil] fileSize];
-    RCTLogInfo(@"file path %@", _filePath);
-    RCTLogInfo(@"file size %llu", fileSize);
+    RCTLogInfo(@"Arquivo gravado em: %@", _filePath);
+    RCTLogInfo(@"Tamanho do arquivo: %llu bytes", fileSize);
 }
 
 void HandleInputBuffer(void *inUserData,
@@ -100,7 +148,14 @@ void HandleInputBuffer(void *inUserData,
 
 - (void)dealloc {
     RCTLogInfo(@"dealloc");
-    AudioQueueDispose(_recordState.mQueue, true);
+    if (_recordState.mQueue != NULL) {
+        AudioQueueDispose(_recordState.mQueue, true);
+        _recordState.mQueue = NULL;
+    }
+    if (_recordState.mAudioFile != NULL) {
+        AudioFileClose(_recordState.mAudioFile);
+        _recordState.mAudioFile = NULL;
+    }
 }
 
 @end
