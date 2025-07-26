@@ -7,7 +7,9 @@ const AudioRecord = {};
 AudioRecord.init = options => RNAudioRecord.init(options);
 AudioRecord.start = () => RNAudioRecord.start();
 AudioRecord.stop = () => RNAudioRecord.stop();
-
+AudioRecord.removeAllDataListeners = () => {
+  EventEmitter.removeAllListeners('data');
+}
 const eventsMap = {
   data: 'data'
 };
