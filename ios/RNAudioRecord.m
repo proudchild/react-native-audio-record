@@ -36,6 +36,7 @@ RCT_EXPORT_METHOD(start) {
         return;
     }
 
+    // Finaliza qualquer gravação antiga mal encerrada
     if (_recordState.mQueue != NULL) {
         AudioQueueDispose(_recordState.mQueue, true);
         _recordState.mQueue = NULL;
@@ -48,6 +49,7 @@ RCT_EXPORT_METHOD(start) {
         RCTLogInfo(@"[START] Arquivo antigo fechado");
     }
 
+    // Configura sessão de áudio
     NSError *sessionError = nil;
     AVAudioSession *session = [AVAudioSession sharedInstance];
     [session setCategory:AVAudioSessionCategoryPlayAndRecord error:&sessionError];
@@ -58,6 +60,12 @@ RCT_EXPORT_METHOD(start) {
 
     _recordState.mIsRunning = true;
     _recordState.mCurrentPacket = 0;
+
+    // Gera nome de arquivo único
+    NSString *uuid = [[NSUUID UUID] UUIDString];
+    NSString *fileName = [NSString stringWithFormat:@"audio-%@.wav", uuid];
+    NSString *docDir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    _filePath = [docDir stringByAppendingPathComponent:fileName];
 
     CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, (CFStringRef)_filePath, NULL);
     OSStatus audioFileStatus = AudioFileCreateWithURL(url, kAudioFileWAVEType, &_recordState.mDataFormat, kAudioFileFlags_EraseFile, &_recordState.mAudioFile);
@@ -85,7 +93,7 @@ RCT_EXPORT_METHOD(start) {
 }
 
 RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
-                  rejecter:(RCTPromiseRejectBlock)reject) {
+                  rejecter:(__unused RCTPromiseRejectBlock)reject) {
     RCTLogInfo(@"[STOP] Finalizando gravação");
 
     if (!_recordState.mIsRunning) {
@@ -107,14 +115,12 @@ RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
         _recordState.mAudioFile = NULL;
     }
 
-    RCTLogInfo(@"[STOP] Gravação encerrada: %@", _filePath);
+
     unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:_filePath error:nil] fileSize];
+    RCTLogInfo(@"[STOP] Gravação encerrada: %@", _filePath);
     RCTLogInfo(@"[STOP] Tamanho do arquivo: %llu bytes", fileSize);
 
     resolve(_filePath);
-
-    memset(&_recordState, 0, sizeof(_recordState));
-    _recordState.mSelf = self;
 }
 
 void HandleInputBuffer(void *inUserData,
