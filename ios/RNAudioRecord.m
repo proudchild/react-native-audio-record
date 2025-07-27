@@ -86,7 +86,12 @@ RCT_EXPORT_METHOD(start) {
         AudioQueueEnqueueBuffer(_recordState.mQueue, _recordState.mBuffers[i], 0, NULL);
     }
     OSStatus audioQueueStartStatus = AudioQueueStart(_recordState.mQueue, NULL);
-    RCTLogInfo(@"[RNARSTART] Gravação iniciada com sucesso. %d", audioQueueStartStatus);
+    if (audioQueueStartStatus != noErr) {
+        NSLog(@"[RNARSTART] Erro ao iniciar gravação: %d", (int)audioQueueStartStatus);
+        return;
+    }else{
+        NSLog(@"[RNARSTART] Gravação iniciada com sucesso.: %d", (int)audioQueueStartStatus);
+    }
 }
 
 RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
@@ -110,7 +115,18 @@ RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
         AudioFileClose(_recordState.mAudioFile);
         _recordState.mAudioFile = NULL;
     }
+    
+    NSError *sessionError = nil;
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    [session setActive:NO error:&sessionError];
+    if (sessionError != nil) {
+        NSLog(@"[RNARSTOP] Erro ao desativar sessão de áudio: %@", sessionError);
+    } else {
+        NSLog(@"[RNARSTOP] Sessão de áudio desativada com sucesso");
+    }
 
+    memset(&_recordState, 0, sizeof(_recordState));
+    _recordState.mSelf = self;
 
     unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:_filePath error:nil] fileSize];
     RCTLogInfo(@"[RNARSTOP] Gravação encerrada: %@", _filePath);
