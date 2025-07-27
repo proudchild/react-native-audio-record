@@ -19,19 +19,19 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) options) {
     
     _recordState.bufferByteSize = 2048;
     _recordState.mSelf = self;
-    
-    NSString *fileName = options[@"wavFile"] == nil ? @"audio.wav" : options[@"wavFile"];
-    NSString *docDir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-    _filePath = [NSString stringWithFormat:@"%@/%@", docDir, fileName];
+
+
 }
 
-RCT_EXPORT_METHOD(start) {
+RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
     RCTLogInfo(@"[RNARSTART] Iniciando gravação");
 
     // most audio players set session category to "Playback", record won't work in this mode
     // therefore set session category to "Record" before recording
     if (_recordState.mIsRunning) {
         RCTLogInfo(@"[RNARSTART] Gravação já em andamento, ignorando novo start.");
+        reject(@"Gravação já em andamento, ignorando novo start.");
         return;
     }
     // Finaliza qualquer gravação antiga mal encerrada
@@ -50,26 +50,37 @@ RCT_EXPORT_METHOD(start) {
     // Configura sessão de áudio
     NSError *sessionError = nil;
     AVAudioSession *session = [AVAudioSession sharedInstance];
-    [session setCategory:AVAudioSessionCategoryRecord error:&sessionError];
+    [session setCategory:AVAudioSessionCategoryPlayAndRecord error:&sessionError];
     if (sessionError != nil) {
         NSLog(@"[RNARSTART] Erro ao configurar categoria de áudio: %@", sessionError);
+        reject(@"[RNARSTART] Erro ao configurar categoria de áudio:");
+        return;
     }else{
         NSLog(@"[RNARSTART] Categoria de audio configurada com sucesso: %@", session);
     }
     [session setActive:YES error:&sessionError];
     if (sessionError != nil) {
         NSLog(@"[RNARSTART] Erro ao configurar sessão de áudio: %@", sessionError);
+        reject(@"[RNARSTART] Erro ao configurar sessão de áudio");
+        return;
     }else{
         NSLog(@"[RNARSTART] Sessão de audio configurada com sucesso: %@", session);
     }
     _recordState.mIsRunning = true;
     _recordState.mCurrentPacket = 0;
+
+    // Gera nome de arquivo único
+    NSString *uuid = [[NSUUID UUID] UUIDString];
+    NSString *fileName = [NSString stringWithFormat:@"audio-%@.wav", uuid];
+    NSString *docDir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    _filePath = [docDir stringByAppendingPathComponent:fileName];
     
     CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, (CFStringRef)_filePath, NULL);
     OSStatus audioFileStatus = AudioFileCreateWithURL(url, kAudioFileWAVEType, &_recordState.mDataFormat, kAudioFileFlags_EraseFile, &_recordState.mAudioFile);
     CFRelease(url);
     if (audioFileStatus != noErr) {
         NSLog(@"[RNARSTART] Erro ao criar arquivo de áudio: %d", (int)audioFileStatus);
+        reject(@"[RNARSTART] Erro ao criar arquivo de áudio:");
         return;
     }else{
         NSLog(@"[RNARSTART] Arquivo de auido criado com sucesso: %d", (int)audioFileStatus);
@@ -77,21 +88,34 @@ RCT_EXPORT_METHOD(start) {
     OSStatus queueStatus = AudioQueueNewInput(&_recordState.mDataFormat, HandleInputBuffer, &_recordState, NULL, NULL, 0, &_recordState.mQueue);
     if (queueStatus != noErr) {
         NSLog(@"[RNARSTART] Erro ao criar fila de gravação: %d", (int)queueStatus);
+        reject(@"[RNARSTART] Erro ao criar fila de gravação:");
         return;
     }else{
         NSLog(@"[RNARSTART] Fila de áuido criada com sucesso: %d", (int)queueStatus);
     }
     for (int i = 0; i < kNumberBuffers; i++) {
-        AudioQueueAllocateBuffer(_recordState.mQueue, _recordState.bufferByteSize, &_recordState.mBuffers[i]);
-        AudioQueueEnqueueBuffer(_recordState.mQueue, _recordState.mBuffers[i], 0, NULL);
+        OSStatus allocateBufferStatus = AudioQueueAllocateBuffer(_recordState.mQueue, _recordState.bufferByteSize, &_recordState.mBuffers[i]);
+        if (allocateBufferStatus != noErr) {
+            NSLog(@"[RNARSTART] Erro ao alocar o buffer %d", (int)allocateBufferStatus);
+            reject(@"[RNARSTART] Erro ao alocar o buffer");
+            return;
+        }
+        allocateBufferStatus = AudioQueueEnqueueBuffer(_recordState.mQueue, _recordState.mBuffers[i], 0, NULL);
+        if (allocateBufferStatus != noErr) {
+            NSLog(@"[RNARSTART] Erro ao enfileirar o buffer %d", (int)allocateBufferStatus);
+            reject(@"[RNARSTART] Erro ao enfileirar o buffer");
+            return;
+        }
     }
     OSStatus audioQueueStartStatus = AudioQueueStart(_recordState.mQueue, NULL);
     if (audioQueueStartStatus != noErr) {
         NSLog(@"[RNARSTART] Erro ao iniciar gravação: %d", (int)audioQueueStartStatus);
+        reject(@"[RNARSTART] Erro ao iniciar gravação:");
         return;
     }else{
         NSLog(@"[RNARSTART] Gravação iniciada com sucesso.: %d", (int)audioQueueStartStatus);
     }
+    resolve(@"[RNARSTART] Gravação iniciada com sucesso.");
 }
 
 RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
@@ -124,10 +148,10 @@ RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
     } else {
         NSLog(@"[RNARSTOP] Sessão de áudio desativada com sucesso");
     }
-
-    memset(&_recordState, 0, sizeof(_recordState));
-    _recordState.mSelf = self;
-
+    _recordState.mQueue = NULL;
+    _recordState.mAudioFile = NULL;
+    _recordState.mIsRunning = false;
+    _recordState.mCurrentPacket = 0;
     unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:_filePath error:nil] fileSize];
     RCTLogInfo(@"[RNARSTOP] Gravação encerrada: %@", _filePath);
     RCTLogInfo(@"[RNARSTOP] Tamanho do arquivo: %llu bytes", fileSize);
@@ -140,7 +164,6 @@ void HandleInputBuffer(void *inUserData,
                        const AudioTimeStamp *inStartTime,
                        UInt32 inNumPackets,
                        const AudioStreamPacketDescription *inPacketDesc) {
-    RCTLogInfo(@"[HandleInputBuffer] INIT:");
     AQRecordState* pRecordState = (AQRecordState *)inUserData;
     
     if (!pRecordState->mIsRunning) {
