@@ -31,7 +31,7 @@ RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
     // therefore set session category to "Record" before recording
     if (_recordState.mIsRunning) {
         RCTLogInfo(@"[RNARSTART] Gravação já em andamento, ignorando novo start.");
-        reject(@"Gravação já em andamento, ignorando novo start.");
+        reject(@"[RNARSTART]",@" Gravação já em andamento, ignorando novo start.",nil);
         return;
     }
     // Finaliza qualquer gravação antiga mal encerrada
@@ -53,7 +53,7 @@ RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
     [session setCategory:AVAudioSessionCategoryPlayAndRecord error:&sessionError];
     if (sessionError != nil) {
         NSLog(@"[RNARSTART] Erro ao configurar categoria de áudio: %@", sessionError);
-        reject(@"[RNARSTART] Erro ao configurar categoria de áudio:");
+        reject(@"[RNARSTART]",@" Erro ao configurar categoria de áudio:", sessionError);
         return;
     }else{
         NSLog(@"[RNARSTART] Categoria de audio configurada com sucesso: %@", session);
@@ -61,7 +61,7 @@ RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
     [session setActive:YES error:&sessionError];
     if (sessionError != nil) {
         NSLog(@"[RNARSTART] Erro ao configurar sessão de áudio: %@", sessionError);
-        reject(@"[RNARSTART] Erro ao configurar sessão de áudio");
+        reject(@"[RNARSTART]",@" Erro ao configurar sessão de áudio", sessionError);
         return;
     }else{
         NSLog(@"[RNARSTART] Sessão de audio configurada com sucesso: %@", session);
@@ -80,7 +80,7 @@ RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
     CFRelease(url);
     if (audioFileStatus != noErr) {
         NSLog(@"[RNARSTART] Erro ao criar arquivo de áudio: %d", (int)audioFileStatus);
-        reject(@"[RNARSTART] Erro ao criar arquivo de áudio:");
+        reject(@"[RNARSTART]",@" Erro ao criar arquivo de áudio:",nil);
         return;
     }else{
         NSLog(@"[RNARSTART] Arquivo de auido criado com sucesso: %d", (int)audioFileStatus);
@@ -88,7 +88,7 @@ RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
     OSStatus queueStatus = AudioQueueNewInput(&_recordState.mDataFormat, HandleInputBuffer, &_recordState, NULL, NULL, 0, &_recordState.mQueue);
     if (queueStatus != noErr) {
         NSLog(@"[RNARSTART] Erro ao criar fila de gravação: %d", (int)queueStatus);
-        reject(@"[RNARSTART] Erro ao criar fila de gravação:");
+        reject(@"[RNARSTART]",@" Erro ao criar fila de gravação:", nil);
         return;
     }else{
         NSLog(@"[RNARSTART] Fila de áuido criada com sucesso: %d", (int)queueStatus);
@@ -97,20 +97,20 @@ RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
         OSStatus allocateBufferStatus = AudioQueueAllocateBuffer(_recordState.mQueue, _recordState.bufferByteSize, &_recordState.mBuffers[i]);
         if (allocateBufferStatus != noErr) {
             NSLog(@"[RNARSTART] Erro ao alocar o buffer %d", (int)allocateBufferStatus);
-            reject(@"[RNARSTART] Erro ao alocar o buffer");
+            reject(@"[RNARSTART]",@" Erro ao alocar o buffer",nil);
             return;
         }
         allocateBufferStatus = AudioQueueEnqueueBuffer(_recordState.mQueue, _recordState.mBuffers[i], 0, NULL);
         if (allocateBufferStatus != noErr) {
             NSLog(@"[RNARSTART] Erro ao enfileirar o buffer %d", (int)allocateBufferStatus);
-            reject(@"[RNARSTART] Erro ao enfileirar o buffer");
+            reject(@"[RNARSTART]",@" Erro ao enfileirar o buffer",nil);
             return;
         }
     }
     OSStatus audioQueueStartStatus = AudioQueueStart(_recordState.mQueue, NULL);
     if (audioQueueStartStatus != noErr) {
         NSLog(@"[RNARSTART] Erro ao iniciar gravação: %d", (int)audioQueueStartStatus);
-        reject(@"[RNARSTART] Erro ao iniciar gravação:");
+        reject(@"[RNARSTART]",@" Erro ao iniciar gravação:",nil);
         return;
     }else{
         NSLog(@"[RNARSTART] Gravação iniciada com sucesso.: %d", (int)audioQueueStartStatus);

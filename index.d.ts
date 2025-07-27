@@ -1,7 +1,7 @@
 declare module "react-native-audio-record" {
   export interface IAudioRecord {
     init: (options: Options) => void
-    start: () => void
+    start: () => Promise<string>
     stop: () => Promise<string>
     on: (event: "data", callback: (data: string) => void) => void,
     removeAllDataListeners: () => void
